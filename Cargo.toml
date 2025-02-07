@@ -15,7 +15,8 @@ categories = ["web-programming"]
 tracing = { version = "0.1.40" }
 opentelemetry = { version = "0.27.1" }
 opentelemetry_sdk = { version = "0.27.1", features = ["rt-tokio"] }
-opentelemetry-application-insights = { version = "0.37.0", features = ["reqwest-client", "metrics", "live-metrics"] }
+#opentelemetry-application-insights = { version = "0.37.0", features = ["reqwest-client", "metrics", "live-metrics"] }
+opentelemetry-application-insights = { git="https://github.com/ebesirik/opentelemetry-application-insights.git", branch = "test", features = ["reqwest-client", "metrics", "live-metrics"] }
 tracing-opentelemetry = { version = "0.28.0" }
 tracing-subscriber = { version = "0.3.17" }
 futures = { version = "0.3.28" }
@@ -26,5 +27,5 @@ hyper = { version = "1.4.1", features = ["full"] }
 tower = { version = "0.5.2", features = ["full"] }
 serde = { version = "1.0.126" }
 serde_json = { version = "1.0.64" }
-tokio = { version = "1.29.1", features = ["rt", "macros", "signal", "parking_lot"] }
+tokio = { version = "1.43.0", features = ["rt", "macros", "signal", "parking_lot"] }
 reqwest = { version = "0.12.5", features = ["blocking"] }
