@@ -16,7 +16,7 @@ tracing = { version = "0.1.40" }
 opentelemetry = { version = "0.27.1" }
 opentelemetry_sdk = { version = "0.27.1", features = ["rt-tokio"] }
 #opentelemetry-application-insights = { version = "0.37.0", features = ["reqwest-client", "metrics", "live-metrics"] }
-opentelemetry-application-insights = { git = "https://github.com/ebesirik/opentelemetry-application-insights.git", rev = "418bd80", features = ["reqwest-client", "metrics", "live-metrics"] }
+opentelemetry-application-insights = { git = "https://github.com/ebesirik/opentelemetry-application-insights.git", rev = "89c33e4", features = ["reqwest-client", "metrics", "live-metrics"] }
 tracing-opentelemetry = { version = "0.28.0" }
 tracing-subscriber = { version = "0.3.17" }
 futures = { version = "0.3.28" }
