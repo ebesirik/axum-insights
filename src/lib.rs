@@ -336,8 +336,10 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
         let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(vec![
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
-            // KeyValue::new("ai.cloud.roleInstance", server_name.clone()), // Azure-specific resource attribute
+            KeyValue::new("ai.cloud.roleInstance", servername.as_ref().to_owned()), // Azure-specific resource attribute
             KeyValue::new("service.instance.id", servername.as_ref().to_owned()),  // General OpenTelemetry attribute
+            KeyValue::new("cloud.roleInstance", servername.as_ref().to_owned()),  // General OpenTelemetry attribute
+            KeyValue::new("k8s.pod.name", servername.as_ref().to_owned()),  // General OpenTelemetry attribute
         ]));
 
         AppInsights {
