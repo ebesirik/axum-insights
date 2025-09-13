@@ -22,7 +22,9 @@ async-trait = { version = "0.1" }
 tracing = { version = "0.1" }
 opentelemetry = { version = "0.27" }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-opentelemetry-application-insights = { version = "0.37", features = ["live-metrics"] }
+#opentelemetry-application-insights = { version = "0.37", features = ["live-metrics"] }
+#opentelemetry-application-insights = {  path = "../opentelemetry-application-insights", features = ["live-metrics"] }
+opentelemetry-application-insights = {  git="https://github.com/ebesirik/opentelemetry-application-insights.git", rev="e8ef760", features = ["live-metrics"] }
 tracing-opentelemetry = { version = "0.28" }
 tracing-subscriber = { version = "0.3" }
 futures = { version = "0.3", default-features = false, features = ["executor"] }
