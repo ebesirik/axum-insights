@@ -124,6 +124,11 @@
 use std::{
     backtrace::Backtrace, collections::HashMap, error::Error, panic::{self, AssertUnwindSafe}, sync::Arc, task::{Context, Poll}
 };
+#[cfg(feature = "axum-0-7")]
+use axum_0_7 as axum;
+
+#[cfg(feature = "axum-0-8")]
+use axum_0_8 as axum;
 
 use axum::{body::Body, extract::MatchedPath, response::Response, RequestPartsExt};
 use futures::{future::BoxFuture, FutureExt};

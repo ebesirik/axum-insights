@@ -12,8 +12,10 @@ keywords = ["axum", "application", "insights", "appinsights", "tracing"]
 categories = ["web-programming"]
 
 [features]
-default = ["reqwest-client"]
+default = ["reqwest-client", "axum-0-8"]
 reqwest-client = ["dep:reqwest", "opentelemetry-application-insights/reqwest-client"]
+axum-0-7 = ["axum_0_7"]
+axum-0-8 = ["axum_0_8"]
 
 [dependencies]
 async-trait = { version = "0.1" }
@@ -26,7 +28,9 @@ tracing-subscriber = { version = "0.3" }
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 http = { version = "1.2" }
 http-body-util = { version = "0.1" }
-axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "macros"] }
+axum_0_7 = { package = "axum", version = "0.7.9", features = ["macros"], optional = true }
+axum_0_8 = { package = "axum", version = "0.8.4", default-features = false, features = ["json", "matched-path", "macros"], optional = true }
+#axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "macros"] }
 hyper = { version = "1.6", default-features = false }
 tower = { version = "0.5", default-features = false }
 serde = { version = "1" }
