@@ -389,13 +389,9 @@ impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
             KeyValue::new("service.instance.id", servername.as_ref().to_owned()),
+            KeyValue::new("ai.cloud.roleInstance", servername.as_ref().to_owned()),
+            KeyValue::new("k8s.pod.name", servername.as_ref().to_owned()),
         ];
-
-        // In Kubernetes, try to use the pod name for better instance identification
-        if let Ok(pod_name) = std::env::var("HOSTNAME") {
-            // In Kubernetes, HOSTNAME is typically set to the pod name
-            resource_attrs.push(KeyValue::new("k8s.pod.name", pod_name));
-        }
 
         let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(resource_attrs));
 
