@@ -368,23 +368,36 @@ impl<C, R, U, P, E> AppInsights<Base, C, R, U, P, E> {
 
 impl<C, R, U, P, E> AppInsights<WithConnectionString, C, R, U, P, E> {
     /// Sets the service namespace and name.
-    /// 
+    ///
     /// ```
     /// use axum_insights::{AppInsights, Ready};
-    /// 
+    ///
     /// let i: AppInsights<Ready> = AppInsights::default()
     ///     .with_connection_string(None)
     ///     .with_service_config("namespace", "name", "servername");
     /// ```
-    /// 
+    ///
     /// This is a convenience method for [`AppInsights::with_trace_config`].
+    ///
+    /// **Note**: The `opentelemetry-application-insights` library will automatically map:
+    /// - `service.namespace` + `service.name` → `ai.cloud.role` (Application Insights role name)
+    /// - `service.instance.id` → `ai.cloud.roleInstance` (Application Insights role instance)
+    /// - In Kubernetes, `k8s.pod.name` takes precedence over `service.instance.id` for role instance
     pub fn with_service_config(self, namespace: impl AsRef<str>, name: impl AsRef<str>, servername: impl AsRef<str>) -> AppInsights<Ready, C, R, U, P> {
-        let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(vec![
+        // For Kubernetes environments, prefer k8s.pod.name if available
+        let mut resource_attrs = vec![
             KeyValue::new("service.namespace", namespace.as_ref().to_owned()),
             KeyValue::new("service.name", name.as_ref().to_owned()),
-            // KeyValue::new("ai.cloud.roleInstance", server_name.clone()), // Azure-specific resource attribute
-            KeyValue::new("service.instance.id", servername.as_ref().to_owned()),  // General OpenTelemetry attribute
-        ]));
+            KeyValue::new("service.instance.id", servername.as_ref().to_owned()),
+        ];
+
+        // In Kubernetes, try to use the pod name for better instance identification
+        if let Ok(pod_name) = std::env::var("HOSTNAME") {
+            // In Kubernetes, HOSTNAME is typically set to the pod name
+            resource_attrs.push(KeyValue::new("k8s.pod.name", pod_name));
+        }
+
+        let config = Config::default().with_resource(opentelemetry_sdk::Resource::new(resource_attrs));
 
         AppInsights {
             connection_string: self.connection_string,
