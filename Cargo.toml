@@ -13,7 +13,7 @@ categories = ["web-programming"]
 
 [features]
 default = ["reqwest-client", "axum-0-8"]
-reqwest-client = ["dep:reqwest", "opentelemetry-application-insights/reqwest-client"]
+reqwest-client = ["dep:reqwest", "opentelemetry-application-insights/reqwest-client-rustls"]
 axum-0-7 = ["axum_0_7"]
 axum-0-8 = ["axum_0_8"]
 
