@@ -7,14 +7,86 @@
 //! This is a trimmed `opentelemetry-appender-tracing` 0.27 bridge plus the span correlation that
 //! crate only gained in 0.28, which needs OpenTelemetry 0.28.
 
+//!
+//! Both layers decide what they handle inside their own callbacks instead of through
+//! `Layer::with_filter`: per-layer filtering adds span-lookup bookkeeping to every span enter, exit
+//! and close, measured at roughly +0.6 µs per request on a span-per-request service.
+
+use std::any::TypeId;
+
 use opentelemetry::{
     logs::{AnyValue, LogRecord, Logger, Severity},
     trace::{Status, TraceContextExt},
     Key,
 };
-use tracing::{field::Field, Event, Level, Subscriber};
+use tracing::{field::Field, span, subscriber::Interest, Event, Level, Metadata, Subscriber};
 use tracing_opentelemetry::OtelData;
-use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
+use tracing_subscriber::{filter::LevelFilter, layer::Context, registry::LookupSpan, Layer};
+
+/// Wraps the span layer so it never records events, which the log bridge exports instead.
+pub(crate) struct SpansOnly<L>(pub(crate) L);
+
+impl<S: Subscriber, L: Layer<S>> Layer<S> for SpansOnly<L> {
+    fn on_register_dispatch(&self, subscriber: &tracing::Dispatch) {
+        self.0.on_register_dispatch(subscriber)
+    }
+
+    fn on_layer(&mut self, subscriber: &mut S) {
+        self.0.on_layer(subscriber)
+    }
+
+    fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
+        self.0.register_callsite(metadata)
+    }
+
+    fn enabled(&self, metadata: &Metadata<'_>, ctx: Context<'_, S>) -> bool {
+        self.0.enabled(metadata, ctx)
+    }
+
+    fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx: Context<'_, S>) {
+        self.0.on_new_span(attrs, id, ctx)
+    }
+
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        self.0.max_level_hint()
+    }
+
+    fn on_record(&self, span: &span::Id, values: &span::Record<'_>, ctx: Context<'_, S>) {
+        self.0.on_record(span, values, ctx)
+    }
+
+    fn on_follows_from(&self, span: &span::Id, follows: &span::Id, ctx: Context<'_, S>) {
+        self.0.on_follows_from(span, follows, ctx)
+    }
+
+    fn on_enter(&self, id: &span::Id, ctx: Context<'_, S>) {
+        self.0.on_enter(id, ctx)
+    }
+
+    fn on_exit(&self, id: &span::Id, ctx: Context<'_, S>) {
+        self.0.on_exit(id, ctx)
+    }
+
+    fn on_close(&self, id: span::Id, ctx: Context<'_, S>) {
+        self.0.on_close(id, ctx)
+    }
+
+    fn on_id_change(&self, old: &span::Id, new: &span::Id, ctx: Context<'_, S>) {
+        self.0.on_id_change(old, new, ctx)
+    }
+
+    // `on_event` is deliberately not forwarded.
+
+    // SAFETY: returns a pointer to `self` for its own type id, and otherwise defers to the inner
+    // layer's implementation, which upholds the contract for the types it recognizes.
+    unsafe fn downcast_raw(&self, id: TypeId) -> Option<*const ()> {
+        if id == TypeId::of::<Self>() {
+            Some(self as *const Self as *const ())
+        } else {
+            self.0.downcast_raw(id)
+        }
+    }
+}
 
 pub(crate) struct LogBridge<L> {
     logger: L,
@@ -33,6 +105,11 @@ where
 {
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let meta = event.metadata();
+
+        // OpenTelemetry's own diagnostics: an export failure would otherwise log, export and fail again in a loop.
+        if meta.target().starts_with("opentelemetry") {
+            return;
+        }
 
         let mut record = self.logger.create_log_record();
         record.set_target(meta.target());

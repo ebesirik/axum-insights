@@ -144,7 +144,7 @@ use opentelemetry_application_insights::HttpClient;
 use serde::{de::DeserializeOwned, Serialize};
 use tower::{Layer, Service};
 use tracing::{Instrument, Span, Level};
-use tracing_subscriber::{filter::{filter_fn, LevelFilter}, prelude::__tracing_subscriber_SubscriberExt, Layer as _, Registry};
+use tracing_subscriber::{filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt, Layer as _, Registry};
 
 // Re-exports.
 
@@ -1211,12 +1211,9 @@ fn otel_layers<S>((tracer, logger): (opentelemetry_sdk::trace::Tracer, opentelem
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
-    let spans = tracing_opentelemetry::layer().with_tracer(tracer).with_filter(filter_fn(|meta| meta.is_span()));
-    // Spans must pass the bridge's filter too: a filtered layer's context only sees spans its filter enabled.
-    let logs = log_bridge::LogBridge::new(logger)
-        .with_filter(filter_fn(|meta| meta.is_span() || !meta.target().starts_with("opentelemetry")));
+    let spans = log_bridge::SpansOnly(tracing_opentelemetry::layer().with_tracer(tracer));
 
-    spans.and_then(logs)
+    spans.and_then(log_bridge::LogBridge::new(logger))
 }
 
 /// Extracts the message from a panic payload: `&str` for literal panics, `String` for formatted ones (including `unwrap`).
