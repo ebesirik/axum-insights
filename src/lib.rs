@@ -122,8 +122,10 @@
 #![warn(rustdoc::broken_intra_doc_links, rust_2018_idioms, clippy::all, missing_docs)]
 
 use std::{
-    backtrace::Backtrace, collections::HashMap, error::Error, panic::{self, AssertUnwindSafe}, sync::Arc, task::{Context, Poll}
+    any::Any, backtrace::Backtrace, collections::HashMap, error::Error, panic::{self, AssertUnwindSafe}, sync::Arc, task::{Context, Poll}
 };
+mod log_bridge;
+
 #[cfg(feature = "axum-0-7")]
 use axum_0_7 as axum;
 
@@ -136,12 +138,13 @@ use http::StatusCode;
 use http_body_util::BodyExt;
 use hyper::Request;
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::{runtime::{RuntimeChannel, Tokio}, trace::Config};
+use opentelemetry::logs::LoggerProvider as _;
+use opentelemetry_sdk::{logs::LoggerProvider, runtime::{RuntimeChannel, Tokio}, trace::Config};
 use opentelemetry_application_insights::HttpClient;
 use serde::{de::DeserializeOwned, Serialize};
 use tower::{Layer, Service};
 use tracing::{Instrument, Span, Level};
-use tracing_subscriber::{filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt, Registry};
+use tracing_subscriber::{filter::{filter_fn, LevelFilter}, prelude::__tracing_subscriber_SubscriberExt, Layer as _, Registry};
 
 // Re-exports.
 
@@ -876,7 +879,7 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
     /// allow this call to set the global default.
     pub fn build_and_set_global_default(self) -> Result<AppInsightsComplete<P, E>, Box<dyn Error + Send + Sync + 'static>>
     where
-        C: HttpClient + 'static,
+        C: HttpClient + Clone + 'static,
         R: RuntimeChannel,
         U: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>  + Send + Sync + 'static
     {
@@ -890,49 +893,46 @@ impl<C, R, U, P, E> AppInsights<Ready, C, R, U, P, E> {
             });
         }
 
+        // Spans go through `tracing-opentelemetry`; every event goes through the log bridge instead, so events outside
+        // a span, or inside one that never closes, still reach Application Insights. OpenTelemetry's own diagnostics
+        // stay out of the bridge: an export failure would otherwise log, export and fail again in a loop.
+        let pipelines = match self.connection_string {
+            Some(connection_string) => {
+                let resource = self.config.resource.clone().into_owned();
+
+                let log_exporter = opentelemetry_application_insights::Exporter::new_from_connection_string(&connection_string, self.client.clone())?;
+                let logger = LoggerProvider::builder()
+                    .with_batch_exporter(log_exporter, self.batch_runtime.clone())
+                    .with_resource(resource)
+                    .build()
+                    .logger("axum-insights");
+
+                let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
+                    .with_client(self.client)
+                    .with_live_metrics(self.enable_live_metrics)
+                    .with_trace_config(self.config)
+                    .with_sample_rate(self.sample_rate)
+                    .install_batch(self.batch_runtime);
+
+                Some((tracer, logger))
+            },
+            None => None,
+        };
+
         // This subscriber calculation needs to be separate in order to allow the type inference to work properly.
         // Theoretically, we could do some magic with boxed traits to make it more readable, but this makes the types
         // work nicely.
         match self.subscriber {
-            Some(subscriber) => {
-                if let Some(connection_string) = self.connection_string {
-                    let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
-                        .with_client(self.client)
-                        .with_live_metrics(self.enable_live_metrics)
-                        .with_trace_config(self.config)
-                        .with_sample_rate(self.sample_rate)
-                        .install_batch(self.batch_runtime);
-
-                    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-                    let subscriber = subscriber.with(telemetry).with(self.minimum_level);
-                    tracing::subscriber::set_global_default(subscriber)?;
-                } else {
-                    tracing::subscriber::set_global_default(subscriber.with(self.minimum_level))?;
-                }
-            },
-            None => {
-                if let Some(connection_string) = self.connection_string {
-                    let tracer = opentelemetry_application_insights::new_pipeline_from_connection_string(connection_string)?
-                        .with_client(self.client)
-                        .with_live_metrics(self.enable_live_metrics)
-                        .with_trace_config(self.config)
-                        .with_sample_rate(self.sample_rate)
-                        .install_batch(self.batch_runtime);
-
-                    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-                    let subscriber = tracing_subscriber::registry().with(telemetry).with(self.minimum_level);
-                    tracing::subscriber::set_global_default(subscriber)?;
-                } else {
-                    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(self.minimum_level))?;
-                }
-            },
+            Some(subscriber) => tracing::subscriber::set_global_default(subscriber.with(pipelines.map(otel_layers)).with(self.minimum_level))?,
+            None => tracing::subscriber::set_global_default(tracing_subscriber::registry().with(pipelines.map(otel_layers)).with(self.minimum_level))?,
         }
 
         if self.should_catch_panic {
             let default_panic = panic::take_hook();
 
             panic::set_hook(Box::new(move |p| {
-                let payload_string = format!("{:?}", p.payload().downcast_ref::<&str>());
+                let location = p.location().map(|l| format!(" at {l}")).unwrap_or_default();
+                let payload_string = format!("{}{location}", panic_message(p.payload()));
                 let backtrace = Backtrace::force_capture().to_string();
 
                 tracing::event!(
@@ -1101,7 +1101,7 @@ where
                     Ok(response) => response,
                     Err(e) => {
                         // Get the payload string from the panic (usually the panic message).
-                        let payload_string = format!("{:?}", e.downcast_ref::<&str>());
+                        let payload_string = panic_message(e.as_ref());
 
                         // Use the given mapper, or create a default error.  For now, a feature of this library is to "panic handle".
                         let (status, error_string) = if let Some(panic_mapper) = panic_mapper.as_ref() {
@@ -1155,11 +1155,19 @@ where
                     // Get the stringified error.
                     let error_string = serde_json::to_string_pretty(&error).unwrap();
 
-                    // Application Insights rejects exception telemetry with an empty message (400), so fall back
-                    // to the status reason when the error type has no message or the body did not deserialize.
+                    // Application Insights rejects exception telemetry with an empty message (400). When the error type
+                    // yields nothing, use a plain-text body (framework rejections are text), then the status reason.
                     let error_message = error
                         .message()
                         .filter(|m| !m.is_empty())
+                        .or_else(|| {
+                            parts.headers.get(http::header::CONTENT_ENCODING).is_none()
+                                .then(|| std::str::from_utf8(&body_bytes).ok())
+                                .flatten()
+                                .map(str::trim)
+                                .filter(|b| !b.is_empty())
+                                .map(str::to_owned)
+                        })
                         .unwrap_or_else(|| status.canonical_reason().unwrap_or("Unknown status").to_owned());
 
                     tracing::event!(
@@ -1198,6 +1206,28 @@ where
     }
 }
 
+/// Spans go to the tracer; events go to the log bridge, except OpenTelemetry's own diagnostics.
+fn otel_layers<S>((tracer, logger): (opentelemetry_sdk::trace::Tracer, opentelemetry_sdk::logs::Logger)) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    let spans = tracing_opentelemetry::layer().with_tracer(tracer).with_filter(filter_fn(|meta| meta.is_span()));
+    // Spans must pass the bridge's filter too: a filtered layer's context only sees spans its filter enabled.
+    let logs = log_bridge::LogBridge::new(logger)
+        .with_filter(filter_fn(|meta| meta.is_span() || !meta.target().starts_with("opentelemetry")));
+
+    spans.and_then(logs)
+}
+
+/// Extracts the message from a panic payload: `&str` for literal panics, `String` for formatted ones (including `unwrap`).
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Box<dyn Any>".to_owned())
+}
+
 // Non-reqwest noop-client.
 
 /// A no-op client for use when the `reqwest-client` feature is not enabled.
@@ -1205,7 +1235,7 @@ where
 /// Usually, this means that the user should have their own client, and they should use the
 /// [`AppInsights::with_client`] method to inject it.
 #[cfg(not(feature = "reqwest-client"))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NoopClient;
 
 #[cfg(not(feature = "reqwest-client"))]
