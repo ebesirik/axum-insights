@@ -1155,12 +1155,19 @@ where
                     // Get the stringified error.
                     let error_string = serde_json::to_string_pretty(&error).unwrap();
 
+                    // Application Insights rejects exception telemetry with an empty message (400), so fall back
+                    // to the status reason when the error type has no message or the body did not deserialize.
+                    let error_message = error
+                        .message()
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or_else(|| status.canonical_reason().unwrap_or("Unknown status").to_owned());
+
                     tracing::event!(
                         name: "exception",
                         Level::ERROR,
                         ai.customEvent.name = "exception",
                         "exception.type" = format!("HTTP {}", status.as_u16()),
-                        exception.message = error.message().unwrap_or_default(),
+                        exception.message = error_message,
                         exception.stacktrace = error.backtrace().unwrap_or_default(),
                         "exception"
                     );
